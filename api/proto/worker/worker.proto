@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+option go_package = "teleport-job-worker/api/proto/worker";
+import "api/proto/job/job.proto";
+package worker;
+
+message User {
+  string token = 1;
+}
+
+message Jobs {
+  repeated job.Info job = 1;
+}
+
+service Worker {
+  // Gets details of jobs owned by the specified user
+  rpc Query(worker.User) returns (worker.Jobs) {}
+}

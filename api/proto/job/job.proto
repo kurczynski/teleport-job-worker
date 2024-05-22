@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+option go_package = "teleport-job-worker/api/proto/job";
+package job;
+
+message StartRequest {
+  job.Command command = 1;
+  job.Resources resource_limits = 2;
+}
+
+message StopRequest {
+  string id = 1;
+}
+
+message QueryRequest {
+  string id = 1;
+}
+
+message OutputRequest {
+  string id = 1;
+}
+
+message Resources {
+  int32 memory = 1;
+  int32 cpu = 2;
+  int32 disk_io = 3;
+}
+
+message Response {
+  job.Info info = 1;
+  job.Resources resource_limits = 2;
+}
+
+message OutputResponse {
+  string stdout = 1;
+  string stderr = 2;
+}
+
+message Info {
+  string id = 1;
+  job.Statuses status = 2;
+}
+
+message Command {
+  string name = 1; // Name of the command to execute
+  repeated string args = 2; // Command arguments
+}
+
+enum Statuses {
+  RUNNING = 0; // Initial status; jobs remain in this status during process execution
+  STOPPED = 1; // Terminal status for when a job is stopped by a user
+  FAILED = 2; // Terminal status for when a job's process returns a non-zero exit code
+  SUCCESS = 3; // Terminal status for when a job's process returns an exit code of zero
+}
+
+service Job {
+  // Start a new job and begin execution of the specified command immediately
+  rpc Start(job.StartRequest) returns (job.Response) {}
+  // Stop execution of the specified job immediately
+  rpc Stop(job.StopRequest) returns (job.Response) {}
+  // Query details about specified job; this function can run on a job of any status
+  rpc Query(job.QueryRequest) returns (job.Response) {}
+  // Get the full output (stdout and stderr) of any existing job
+  rpc Output(job.OutputRequest) returns (stream job.OutputResponse) {}
+}
