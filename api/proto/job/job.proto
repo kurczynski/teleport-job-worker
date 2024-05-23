@@ -21,9 +21,9 @@ message OutputRequest {
 }
 
 message Resources {
-  int32 memory = 1;
-  int32 cpu = 2;
-  int32 disk_io = 3;
+  int32 memory_bytes = 1; // Amount of memory in bytes that a job can use
+  int32 cpu_percentage = 2; // Percentage of CPU that a job can use
+  int32 disk_io_bps = 3; // Bytes per second a job can use on a disk; this value is applied separately to writes and reads
 }
 
 message Response {
