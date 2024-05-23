@@ -38,7 +38,7 @@ message OutputResponse {
 
 message Info {
   string id = 1;
-  job.Statuses status = 2;
+  job.Status status = 2;
 }
 
 message Command {
@@ -46,7 +46,7 @@ message Command {
   repeated string args = 2; // Command arguments
 }
 
-enum Statuses {
+enum Status {
   RUNNING = 0; // Initial status; jobs remain in this status during process execution
   STOPPED = 1; // Terminal status for when a job is stopped by a user
   FAILED = 2; // Terminal status for when a job's process returns a non-zero exit code
