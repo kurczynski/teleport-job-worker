@@ -107,7 +107,10 @@ A job is responsible for managing the lifecycle of the process given to it.
 * `Start` start a new job and begin execution of the specified command immediately
 * `Stop` stop execution of the specified job immediately
 * `Query` query details about specified job; this function can run on a job of any status
-* `Output` get the full output (stdout and stderr) of any existing job
+* `Output` get the full output (stdout and stderr) of any existing job; the output from the job will be written to
+  memory as the process executes so that it can be retrieved by calls to this function; for this exercise, output will
+  remain available until the job worker has exited; for real world uses, the output would need to be removed or written
+  to persistent storage because of memory limitations
 
 Details of a job's functions are listed in [job.proto](../api/proto/job/job.proto).
 
