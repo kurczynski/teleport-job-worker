@@ -78,23 +78,14 @@ of this service would store job metadata in some kind of persistent storage like
 The service will implement the following protobufs:
 
 * [job](../api/proto/job/job.proto)
-* [worker](../api/proto/worker/worker.proto)
 
 ### API
 
 The service's API will contain the resources listed below and be made available using gRPC.
 
-#### worker
-
-The worker is responsible for managing jobs and enforcing authorization for them. The worker may contain many jobs.
-
-* `Query` gets details of jobs owned by the specified user
-
-Details of the worker's functions are listed in [worker.proto](../api/proto/worker/worker.proto).
-
 #### job
 
-A job is responsible for managing the lifecycle of the process given to it. A job only has one worker.
+A job is responsible for managing the lifecycle of the process given to it.
 
 * `Start` start a new job and begin execution of the specified command immediately
 * `Stop` stop execution of the specified job immediately
