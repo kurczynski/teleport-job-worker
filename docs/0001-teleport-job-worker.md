@@ -36,15 +36,32 @@ fine. However, proper OAuth would need to be implemented for use in production.
 ### UX
 
 The CLI used in the service will be a simple application that implements the shared library and expose all the
-functionality of the [API](#api).
+functionality of the [API](#api). This is what they will look like in the CLI:
 
-For example, calling `Query()` in the API is equivalent to calling:
-
-```shell
-job-worker query some-user-token
-```
-
-An exhaustive list of commands and arguments must be available using the `-help` flag.
+* **Start**
+  ```shell
+  job-worker -token "some-token" start -cpu 10 -memory 1000 -io 400 -cmd "/usr/bin/sleep" -args "60"
+  ```
+  The auto-generated ID for the job will be returned if the job is started successfully. The resource arguments use the
+  following units:
+    * `cpu` percentage of available CPU
+    * `memory` bytes
+    * `io` bytes per second limit on reads and bytes per second limit on writes (e.g. 400 will limit reads to 400 bytes
+      per second and writes to 400 bytes per second)
+* **Stop**
+  ```shell
+  job-worker -token "some-token" stop -id "some-job-id"
+  ```
+* **Query**
+  ```shell
+  job-worker -token "some-token" query -id "some-job-id"
+  ```
+  Returns details about the job that matches the provided ID.
+* **Output**
+  ```shell
+  job-worker -token "some-token" output -id "some-job-id"
+  ```
+  Returns all the output for the job that matches the provided ID.
 
 ### Process Execution
 
