@@ -118,6 +118,40 @@ A job is responsible for managing the lifecycle of the process given to it.
 
 Details of a job's functions are listed in [job.proto](../api/proto/job/job.proto).
 
+### Library Godoc
+```
+package library // import "github.com/kurczynski/teleport-job-worker/pkg/library"
+
+TYPES
+
+type Job struct {
+	// Has unexported fields.
+}
+    Job Contains information to interact with jobs.
+
+func GetJob(id string) *Job
+    GetJob Return the job that has the specified ID; return nil if no job
+    exists.
+
+func NewJob(command string, args ...string) *Job
+    NewJob Create a new job to run the specified command.
+
+func (j *Job) Id() string
+    Id Returns the ID of the job.
+
+func (j *Job) Output() *job.OutputRequest
+    Output Get the full output (stdout and stderr) from the job.
+
+func (j *Job) Query() *job.Info
+    Query Get information about the job.
+
+func (j *Job) Start() error
+    Start Begin execution of the job's command immediately.
+
+func (j *Job) Stop()
+    Stop End execution of the job immediately.
+```
+
 ### Observability
 
 For the purpose of this challenge, simple logging will be the only observability implemented. If this service were to be
