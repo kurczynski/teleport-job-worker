@@ -66,15 +66,19 @@ functionality of the [API](#api). This is what they will look like in the CLI:
 ### Process Execution
 
 Jobs will be forked from the service's process and contain exactly one process that it manages. A job must have one of
-the statuses defined in `Statuses` of the [proto spec](../api/proto/job/job.proto) where it will start in an initial
-state and finish in one of three terminal states:
+the statuses defined in `Statuses` of the [proto spec](../api/proto/job/job.proto) and will transition between statuses
+as show below:
 
 ```
-            ┌──► stopped  
-            │             
-running ────┼──► failed   
-            │             
-            └──► succeeded
+  ┌───────────────────────────┐
+  │                           │
+ready      ┌────►stopped◄─────┤
+  │        │                  │
+  │        │                  │
+  │        ├────►failed◄──────┘
+  │        │                   
+  ▼        │                   
+running────┴────►succeeded     
 ```
 
 Resource control will be implemented using cgroups. A parent directory `job-worker` will be created

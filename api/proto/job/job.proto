@@ -39,18 +39,25 @@ message OutputResponse {
 message Info {
   string id = 1;
   job.Status status = 2;
+  uint64 start_time = 3; // Time the job started in number of milliseconds since the epoch
+  uint64 finish_time = 4; // Time the job stopped in number of milliseconds since the epoch
+  job.Command command = 5;
+  string status_info = 6; // Information about the current job status; may be empty
 }
 
 message Command {
   string name = 1; // Name of the command to execute
   repeated string args = 2; // Command arguments
+  uint64 start_time = 3; // Time the command started in number of milliseconds since the epoch
+  uint64 finish_time = 4; // Time the command stopped in number of milliseconds since the epoch
 }
 
 enum Status {
-  RUNNING = 0; // Initial status; jobs remain in this status during process execution
+  RUNNING = 0; // Intermediate status of a job during the execution of a command
   STOPPED = 1; // Terminal status for when a job is stopped by a user
   FAILED = 2; // Terminal status for when a job's process returns a non-zero exit code
   SUCCESS = 3; // Terminal status for when a job's process returns an exit code of zero
+  READY = 4; // Initial job status before the command has begun execution
 }
 
 service Job {
