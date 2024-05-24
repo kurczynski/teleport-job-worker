@@ -3,6 +3,8 @@ syntax = "proto3";
 option go_package = "teleport-job-worker/api/proto/job";
 package job;
 
+import "google/protobuf/timestamp.proto";
+
 message StartRequest {
   job.Command command = 1;
   job.Resources resource_limits = 2;
@@ -21,9 +23,12 @@ message OutputRequest {
 }
 
 message Resources {
-  uint64 memory_bytes = 1; // Amount of memory in bytes that a job can use
-  int32 cpu_percentage = 2; // Percentage of CPU that a job can use
-  int32 disk_io_bps = 3; // Bytes per second a job can use on a disk; this value is applied separately to writes and reads
+  // Amount of memory in bytes that a job can use
+  uint64 memory_bytes = 1;
+  // Percentage of CPU that a job can use
+  int32 cpu_percentage = 2;
+  // Bytes per second a job can use on a disk; this value is applied separately to writes and reads
+  int32 disk_io_bps = 3;
 }
 
 message Response {
@@ -39,25 +44,33 @@ message OutputResponse {
 message Info {
   string id = 1;
   job.Status status = 2;
-  uint64 start_time = 3; // Time the job started in number of milliseconds since the epoch
-  uint64 finish_time = 4; // Time the job stopped in number of milliseconds since the epoch
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp finish_time = 4;
   job.Command command = 5;
-  string status_info = 6; // Information about the current job status; may be empty
+  // Information about the current job status; may be empty
+  string status_info = 6;
 }
 
 message Command {
-  string name = 1; // Name of the command to execute
-  repeated string args = 2; // Command arguments
-  uint64 start_time = 3; // Time the command started in number of milliseconds since the epoch
-  uint64 finish_time = 4; // Time the command stopped in number of milliseconds since the epoch
+  // Name of the command to execute
+  string name = 1;
+  // Command arguments
+  repeated string args = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp finish_time = 4;
 }
 
 enum Status {
-  RUNNING = 0; // Intermediate status of a job during the execution of a command
-  STOPPED = 1; // Terminal status for when a job is stopped by a user
-  FAILED = 2; // Terminal status for when a job's process returns a non-zero exit code
-  SUCCESS = 3; // Terminal status for when a job's process returns an exit code of zero
-  READY = 4; // Initial job status before the command has begun execution
+  // Intermediate status of a job during the execution of a command
+  RUNNING = 0;
+  // Terminal status for when a job is stopped by a user
+  STOPPED = 1;
+  // Terminal status for when a job's process returns a non-zero exit code
+  FAILED = 2;
+  // Terminal status for when a job's process returns an exit code of zero
+  SUCCESS = 3;
+  // Initial job status before the command has begun execution
+  READY = 4;
 }
 
 service Job {
