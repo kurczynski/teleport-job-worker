@@ -120,37 +120,37 @@ A job is responsible for managing the lifecycle of the process given to it.
 Details of a job's functions are listed in [job.proto](../api/proto/job/job.proto).
 
 ### Library Godoc
+
 ```
 package library // import "github.com/kurczynski/teleport-job-worker/pkg/library"
 
 TYPES
 
+// Job Contains information to interact with jobs.
 type Job struct {
 	// Has unexported fields.
 }
-    Job Contains information to interact with jobs.
 
+// GetJob Return the job that has the specified ID; return nil if no job exists.
 func GetJob(id string) *Job
-    GetJob Return the job that has the specified ID; return nil if no job
-    exists.
 
+// NewJob Create a new job to run the specified command.
 func NewJob(command string, args ...string) *Job
-    NewJob Create a new job to run the specified command.
 
-func (j *Job) Id() string
-    Id Returns the ID of the job.
+// ID Returns the ID of the job.
+func (j *Job) ID() string
 
+// Output Get the full output (stdout and stderr) from the job.
 func (j *Job) Output() *job.OutputRequest
-    Output Get the full output (stdout and stderr) from the job.
 
+// Query Get information about the job.
 func (j *Job) Query() *job.Info
-    Query Get information about the job.
 
+// Start Begin execution of the job's command immediately.
 func (j *Job) Start() error
-    Start Begin execution of the job's command immediately.
 
+// Stop End execution of the job immediately.
 func (j *Job) Stop()
-    Stop End execution of the job immediately.
 ```
 
 ### Observability
