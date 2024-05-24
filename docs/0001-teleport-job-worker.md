@@ -86,7 +86,8 @@ under `/sys/fs/cgroup` that will contain a directory for every job created. For 
 like `/sys/fs/cgroup/job-worker/job-a`. Under this path, the following files would be updated to manage the resources
 for the job:
 
-* `cgroup.procs` contains the PID of the job's process being managed
+* `cgroup.procs` contains the PID of the job, i.e. the forked process; cgroups will be applied to this PID in order to
+  control the resources of all child processes
 * `cpu.max` limits CPU usage
 * `memory.max` limits memory usage
 * `io.max` limits disk IO
