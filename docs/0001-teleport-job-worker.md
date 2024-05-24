@@ -26,12 +26,10 @@ Requests made to the service will use mTLS for authentication. Specifically:
 * TLS using the modern version 1.3
 * The cipher suite will need no configuration, it will be handled by `crypto/tls` (this was updated
   in [Go 1.17](https://go.dev/doc/go1.17#crypto/tls))
-* X.509 public/private key pairs will be generated using RSA-4096
+* X.509 public/private key pairs will be generated using RSA-4096; these can be generated using
+  the [Makefile](../Makefile) to run `make create-certs`
 
-For authorization, the service will use simple tokens to ensure that jobs can only be accessed and modified by the user
-who created them. This will be done by adding `grpc.UnaryInterceptor` to the API server to check if the user has
-authorization to interact with the resource. For the purposes of this challenge, this type of authorization will be
-fine. However, proper OAuth would need to be implemented for use in production.
+For authorization, the service will ensure that users are only allowed to interact with the jobs they have created.
 
 ### UX
 
@@ -40,26 +38,27 @@ functionality of the [API](#api). This is what they will look like in the CLI:
 
 * **Start**
   ```shell
-  job-worker -token "some-token" start -cpu 10 -memory 1000 -io 400 -cmd "/usr/bin/sleep" -args "60"
+  job-worker start -cpu 10 -memory 1000 -io 400 -cmd "/usr/bin/sleep" -args "60"
   ```
-  The auto-generated ID for the job will be returned if the job is started successfully. The resource arguments use the
-  following units:
+  The auto-generated ID for the job will be returned if the job is started successfully. A UUID will be used as the
+  job's ID because it will allow for an effectively unlimited number of jobs to be identified uniquely without having to
+  manage or store any additional states. The resource arguments use the following units:
     * `cpu` percentage of available CPU
     * `memory` bytes
     * `io` bytes per second limit on reads and bytes per second limit on writes (e.g. 400 will limit reads to 400 bytes
       per second and writes to 400 bytes per second)
 * **Stop**
   ```shell
-  job-worker -token "some-token" stop -id "some-job-id"
+  job-worker stop -id "some-job-id"
   ```
 * **Query**
   ```shell
-  job-worker -token "some-token" query -id "some-job-id"
+  job-worker query -id "some-job-id"
   ```
   Returns details about the job that matches the provided ID.
 * **Output**
   ```shell
-  job-worker -token "some-token" output -id "some-job-id"
+  job-worker output -id "some-job-id"
   ```
   Returns all the output for the job that matches the provided ID.
 
