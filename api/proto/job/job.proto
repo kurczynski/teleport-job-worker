@@ -44,8 +44,9 @@ message OutputResponse {
 message Info {
   string id = 1;
   job.Status status = 2;
-  google.protobuf.Timestamp start_time = 3;
-  google.protobuf.Timestamp finish_time = 4;
+  // Time the job was created
+  google.protobuf.Timestamp created = 3;
+  repeated job.StatusChange status_change = 4;
   job.Command command = 5;
   // Information about the current job status; may be empty
   string status_info = 6;
@@ -56,8 +57,12 @@ message Command {
   string name = 1;
   // Command arguments
   repeated string args = 2;
-  google.protobuf.Timestamp start_time = 3;
-  google.protobuf.Timestamp finish_time = 4;
+}
+
+// Time the status of the job was changed to this status
+message StatusChange {
+  job.Status status = 1;
+  google.protobuf.Timestamp changed_at = 2;
 }
 
 enum Status {
