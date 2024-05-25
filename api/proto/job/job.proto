@@ -48,7 +48,7 @@ message Info {
   google.protobuf.Timestamp created = 3;
   repeated job.StatusChange status_change = 4;
   job.Command command = 5;
-  // Information about the current job status; may be empty
+  // Human-readable information about the current job status to help give more context; may be empty
   string status_info = 6;
 }
 
