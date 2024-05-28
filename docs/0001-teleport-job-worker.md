@@ -130,8 +130,12 @@ type Job struct {
 	// Has unexported fields.
 }
 
-// GetJob Return the job that has the specified ID; return nil if no job exists.
-func GetJob(id string) *Job
+// Resources cgroup limits that can be configured for jobs.
+type Resources struct {
+	MemoryBytes   uint64
+	CPUPercentage int32
+	DiskIOBps     int32
+}
 
 // NewJob Create a new job to run the specified command.
 func NewJob(command string, args ...string) *Job
@@ -141,9 +145,6 @@ func (j *Job) ID() string
 
 // Output Get the full output (stdout and stderr) from the job.
 func (j *Job) Output() *job.OutputRequest
-
-// Query Get information about the job.
-func (j *Job) Query() *job.Info
 
 // Start Begin execution of the job's command immediately.
 func (j *Job) Start() error

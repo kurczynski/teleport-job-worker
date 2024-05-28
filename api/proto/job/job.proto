@@ -42,7 +42,7 @@ message OutputResponse {
 }
 
 message Info {
-  string id = 1;
+  string ID = 1;
   job.Status status = 2;
   // Time the job was created
   google.protobuf.Timestamp created = 3;
