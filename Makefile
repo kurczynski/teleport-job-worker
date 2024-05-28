@@ -4,6 +4,7 @@ SERVER := server
 CERT_HOST := localhost
 CERT_PATH := config/certs
 CERT_TYPE := rsa:4096
+CERT_CONSTRAINTS := critical,CA:false
 
 PROTO_PATH := api/proto
 
@@ -14,10 +15,11 @@ create-certs:
 		req \
 		-newkey $(CERT_TYPE) \
 		-new \
-		-nodes \
+		-noenc \
 		-x509 \
 		-out $(CERT_PATH)/$(CLIENT)-cert.pem \
 		-keyout $(CERT_PATH)/$(CLIENT)-key.pem \
+		-addext basicConstraints=$(CERT_CONSTRAINTS) \
 		-addext "subjectAltName = DNS:$(CERT_HOST)" \
 		-subj "/C=US/ST=California/L=Somewhere/O=My Organization/OU=My Unit/CN=$(CERT_HOST)"
 
@@ -25,10 +27,11 @@ create-certs:
 		req \
 		-newkey $(CERT_TYPE) \
 		-new \
-		-nodes \
+		-noenc \
 		-x509 \
 		-out $(CERT_PATH)/$(SERVER)-cert.pem \
 		-keyout $(CERT_PATH)/$(SERVER)-key.pem \
+		-addext basicConstraints=$(CERT_CONSTRAINTS) \
 		-addext "subjectAltName = DNS:$(CERT_HOST)" \
 		-subj "/C=US/ST=California/L=Somewhere/O=My Organization/OU=My Unit/CN=$(CERT_HOST)"
 
