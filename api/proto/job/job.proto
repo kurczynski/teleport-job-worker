@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+option go_package = "teleport-job-worker/api/proto/job";
+package job;
+
+import "google/protobuf/timestamp.proto";
+
+message StartRequest {
+  job.Command command = 1;
+  job.Resources resource_limits = 2;
+}
+
+message StopRequest {
+  string id = 1;
+}
+
+message QueryRequest {
+  string id = 1;
+}
+
+message OutputRequest {
+  string id = 1;
+}
+
+message Resources {
+  // Amount of memory in bytes that a job can use
+  uint64 memory_bytes = 1;
+  // Percentage of CPU that a job can use
+  int32 cpu_percentage = 2;
+  // Bytes per second a job can use on a disk; this value is applied separately to writes and reads
+  int32 disk_io_bps = 3;
+}
+
+message Response {
+  job.Info info = 1;
+  job.Resources resource_limits = 2;
+}
+
+message OutputResponse {
+  bytes stdout = 1;
+  bytes stderr = 2;
+}
+
+message Info {
+  string ID = 1;
+  job.Status status = 2;
+  // Time the job was created
+  google.protobuf.Timestamp created = 3;
+  repeated job.StatusChange status_change = 4;
+  job.Command command = 5;
+  // Human-readable information about the current job status to help give more context; may be empty
+  string status_info = 6;
+}
+
+message Command {
+  // Name of the command to execute
+  string name = 1;
+  // Command arguments
+  repeated string args = 2;
+}
+
+// Time the status of the job was changed to this status
+message StatusChange {
+  job.Status status = 1;
+  google.protobuf.Timestamp changed_at = 2;
+}
+
+enum Status {
+  // Intermediate status of a job during the execution of a command
+  RUNNING = 0;
+  // Terminal status for when a job is stopped by a user
+  STOPPED = 1;
+  // Terminal status for when a job's process returns a non-zero exit code
+  FAILED = 2;
+  // Terminal status for when a job's process returns an exit code of zero
+  SUCCESS = 3;
+  // Initial job status before the command has begun execution
+  READY = 4;
+}
+
+service Job {
+  // Start a new job and begin execution of the specified command immediately
+  rpc Start(job.StartRequest) returns (job.Response) {}
+  // Stop execution of the specified job immediately
+  rpc Stop(job.StopRequest) returns (job.Response) {}
+  // Query details about specified job; this function can run on a job of any status
+  rpc Query(job.QueryRequest) returns (job.Response) {}
+  // Get the full output (stdout and stderr) of any existing job
+  rpc Output(job.OutputRequest) returns (stream job.OutputResponse) {}
+}
