@@ -25,12 +25,11 @@ var (
 )
 
 const (
+	CgroupRoot = "/sys/fs/cgroup"
+
 	ExitSuccess      = 0
 	ExitProcessError = 1
-	ExitIOError      = 2
 )
-
-// XXX: /proc/self/limits might be of use at some point
 
 // Job Contains information to interact with jobs.
 type Job struct {
@@ -50,47 +49,40 @@ type Resources struct {
 	DiskIOBps     int
 }
 
+// cgroup Information used to construct a job's cgroup.
 type cgroup struct {
+	root       string
 	workerName string
-	paths      cgroupPaths
+	jobID      string
 }
 
-type cgroupPaths struct {
-	root   string
-	worker string
-	job    string
-}
-
+// newCgroup Creates a new cgroup for the given job.
 func newCgroup(cgroupRoot string, workerName string, jobID string) (*cgroup, error) {
-	workerPath := strings.Join([]string{cgroupRoot, workerName}, string(os.PathSeparator))
-	jobPath := strings.Join([]string{workerPath, jobID}, string(os.PathSeparator))
+	cg := &cgroup{
+		root:       cgroupRoot,
+		workerName: workerName,
+		jobID:      jobID,
+	}
+
+	jobPath := cg.withJobPath()
 
 	logger.Debug("Creating new cgroup", "path", jobPath)
 
-	err := os.MkdirAll(jobPath, 0644)
-
-	if err != nil {
+	if err := os.MkdirAll(jobPath, 0644); err != nil {
 		logger.Error("Failed to create cgroup", "err", err)
 
 		return nil, err
 	}
 
-	return &cgroup{
-		workerName: workerName,
-		paths: cgroupPaths{
-			root:   cgroupRoot,
-			worker: workerPath,
-			job:    jobPath,
-		},
-	}, nil
+	return cg, nil
 }
 
 // NewJob Create a new job to run the specified command using the given resource limits.
-func NewJob(worker string, resourceLimits Resources, command string, args ...string) (*Job, error) {
-	logger.Debug("Creating new job", "worker", worker, "resourceLimits", resourceLimits, "command", command, "args", args)
+func NewJob(workerName string, resourceLimits Resources, command string, args ...string) (*Job, error) {
+	logger.Debug("Creating new job", "workerName", workerName, "resourceLimits", resourceLimits, "command", command, "args", args)
 
 	id := uuid.NewString()
-	cg, err := newCgroup("/sys/fs/cgroup", worker, id)
+	cg, err := newCgroup(CgroupRoot, workerName, id)
 
 	if err != nil {
 		return nil, err
@@ -138,13 +130,14 @@ func (j *Job) Output() (io.Reader, io.Reader) {
 	return j.stdout, j.stderr
 }
 
+// fork Fork from the main execution process and store the child's output pipes to be referenced in the parent process.
 func (j *Job) fork() {
 	rStdout, wStdout, err := os.Pipe()
 
 	if err != nil {
 		logger.Error("Failed to create stdout pipe", "err", err)
 
-		os.Exit(ExitIOError)
+		return
 	}
 
 	rStderr, wStderr, err := os.Pipe()
@@ -152,7 +145,7 @@ func (j *Job) fork() {
 	if err != nil {
 		logger.Error("Failed to create stderr pipe", "err", err)
 
-		os.Exit(ExitIOError)
+		return
 	}
 
 	j.stdout = rStdout
@@ -168,9 +161,7 @@ func (j *Job) fork() {
 			Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
 		}
 
-		err = j.forkCmd.Start()
-
-		if err != nil {
+		if err := j.forkCmd.Start(); err != nil {
 			logger.Error("Failed to fork job", "id", j.id, "err", err)
 
 			return
@@ -178,9 +169,7 @@ func (j *Job) fork() {
 
 		logger.Debug("Waiting for job to run", "id", j.id)
 
-		err = j.forkCmd.Wait()
-
-		if err != nil {
+		if err := j.forkCmd.Wait(); err != nil {
 			logger.Error("Job failed", "id", j.id, "err", err)
 
 			return
@@ -194,10 +183,8 @@ func (j *Job) fork() {
 func (j *Job) runProcess() {
 	pid := os.Getpid()
 
-	err := j.cgroup.setup(pid, j.resourceLimits)
-
-	if err != nil {
-		logger.Error("Setup failed", "err", err)
+	if err := j.cgroup.setup(pid, j.resourceLimits); err != nil {
+		logger.Error("Cgroup setup failed", "err", err)
 
 		os.Exit(ExitProcessError)
 	}
@@ -206,17 +193,13 @@ func (j *Job) runProcess() {
 	j.processCmd.Stdout = os.Stdout
 	j.processCmd.Stderr = os.Stderr
 
-	err = j.processCmd.Start()
-
-	if err != nil {
+	if err := j.processCmd.Start(); err != nil {
 		logger.Error("Failed to start job process", "id", j.id, "process", j.processCmd.String())
 
 		os.Exit(ExitProcessError)
 	}
 
-	err = j.processCmd.Wait()
-
-	if err != nil {
+	if err := j.processCmd.Wait(); err != nil {
 		logger.Error("Job process failed", "id", j.id, "err", err)
 
 		os.Exit(ExitProcessError)
@@ -229,124 +212,32 @@ func (j *Job) runProcess() {
 
 // setup Restricts the given PID to the given resource limits.
 func (c *cgroup) setup(pid int, resourceLimits Resources) error {
-	// XXX: memory.max is defined in kB
-	err := c.setMemory(resourceLimits.MemoryBytes)
-
-	if err != nil {
+	if err := c.setSubtreeController("+memory +cpu +io"); err != nil {
 		return err
 	}
 
-	err = c.setCpu(resourceLimits.CPUPercentage)
-
-	if err != nil {
+	if err := c.setMemory(resourceLimits.MemoryBytes); err != nil {
 		return err
 	}
 
-	err = c.setIo()
-
-	if err != nil {
+	if err := c.setCPU(resourceLimits.CPUPercentage); err != nil {
 		return err
 	}
 
-	err = c.addProc(pid)
+	if err := c.setDiskIO(); err != nil {
+		return err
+	}
 
-	if err != nil {
+	if err := c.addProc(pid); err != nil {
 		return err
 	}
 
 	return nil
 }
 
+// addProc Adds the given PID to the list of processes to have their resources managed.
 func (c *cgroup) addProc(pid int) error {
-	procPath := strings.Join([]string{c.paths.job, "cgroup.procs"}, string(os.PathSeparator))
-
-	err := writeFile(procPath, strconv.Itoa(pid))
-
-	if err != nil {
-		return err
-	}
-
-	logger.Debug("Added process to cgroup", "pid", pid, "path", procPath)
-
-	return nil
-}
-
-func (c *cgroup) setMemory(memoryMax uint64) error {
-	err := c.setSubtreeController("+memory")
-
-	if err != nil {
-		return err
-	}
-
-	err = c.setResource("memory.max", strconv.FormatUint(memoryMax, 10))
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *cgroup) setCpu(percentage int) error {
-	period := 1 * time.Second
-	quota := period.Microseconds() * int64(percentage)
-
-	err := c.setSubtreeController("+cpu")
-
-	if err != nil {
-		return err
-	}
-
-	err = c.setResource("cpu.max", fmt.Sprintf("%d %d\n", quota, period.Microseconds()))
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// TODO: Implement
-func (c *cgroup) setIo() error {
-	err := c.setSubtreeController("+io")
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *cgroup) setResource(resource string, value string) error {
-	resourcePath := strings.Join([]string{c.paths.job, resource}, string(os.PathSeparator))
-
-	err := writeFile(resourcePath, value)
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *cgroup) setSubtreeController(arg string) error {
-	/*
-		Subtree controllers must be set one level up from the job due to the "no internal process constraint"
-		https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#no-internal-process-constraint
-	*/
-
-	// TODO: Check if the resource can be controlled
-	// This lists the available resources that can be controlled
-	_ = "/sys/fs/cgroup/cgroup.controllers"
-
-	// Resources listed in this file allow containers to use them
-	svcSubtree := strings.Join([]string{c.paths.worker, "cgroup.subtree_control"}, string(os.PathSeparator))
-
-	// Use '+' to add resource and '-' to remove it
-	return writeFile(svcSubtree, arg)
-}
-
-func writeFile(fpath string, arg string) error {
-	f, err := os.OpenFile(fpath, os.O_WRONLY, 0644)
+	f, err := os.OpenFile(c.withJobPath("cgroup.procs"), os.O_WRONLY, 0644)
 
 	if err != nil {
 		return err
@@ -354,11 +245,94 @@ func writeFile(fpath string, arg string) error {
 
 	defer f.Close()
 
-	if _, err = f.WriteString(fmt.Sprintf("%s", arg)); err != nil {
+	if err := c.setResource(f, strconv.Itoa(pid)); err != nil {
 		return err
 	}
 
-	logger.Debug("Wrote to file", "file", f.Name(), "data", arg)
+	return nil
+}
+
+// setMemory Set the maximum amount of memory the job can use.
+// TODO: Double check the units used to limit memory (defined in kB?)
+func (c *cgroup) setMemory(memoryMax uint64) error {
+	f, err := os.OpenFile(c.withJobPath("memory.max"), os.O_WRONLY, 0644)
+
+	if err != nil {
+		return err
+	}
+
+	defer f.Close()
+
+	if err := c.setResource(f, strconv.FormatUint(memoryMax, 10)); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+// setCPU Set the maximum amount of CPU the job can use as a percentage.
+func (c *cgroup) setCPU(percentage int) error {
+	period := 1 * time.Second
+	quota := period.Microseconds() * int64(percentage)
+
+	f, err := os.OpenFile(c.withJobPath("cpu.max"), os.O_WRONLY, 0644)
+
+	if err != nil {
+		return err
+	}
+
+	defer f.Close()
+
+	return c.setResource(f, fmt.Sprintf("%d %d\n", quota, period.Microseconds()))
+}
+
+// setDiskIO Set the maximum amount of disk IO the job can use.
+// TODO: Implement
+func (c *cgroup) setDiskIO() error {
+	return nil
+}
+
+// setResource Generalized function to help set resources in a unified way.
+func (c *cgroup) setResource(resource io.Writer, value string) error {
+	n, err := resource.Write([]byte(value))
+
+	if err != nil {
+		return err
+	}
+
+	logger.Debug("Set resource", "value", value, "bytesWritten", n)
+
+	return nil
+}
+
+// setSubtreeController Sets the resources that can be limited in a job. The subtree control resources must be set
+// before the job's resources limits can be set.
+func (c *cgroup) setSubtreeController(args ...string) error {
+	// Subtree controllers must be set one level up from the job due to the "no internal process constraint"
+	// https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#no-internal-process-constraint
+	f, err := os.OpenFile(c.withWorkerPath("cgroup.subtree_control"), os.O_WRONLY, 0644)
+
+	if err != nil {
+		return err
+	}
+
+	defer f.Close()
+
+	for _, arg := range args {
+		if err := c.setResource(f, arg); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// withWorkerPath Utility function to generating the worker's cgroup path easier.
+func (c *cgroup) withWorkerPath(resource ...string) string {
+	return strings.Join(append([]string{c.root, c.workerName}, resource...), string(os.PathSeparator))
+}
+
+// withJobPath Utility function to generating the job's cgroup path easier.
+func (c *cgroup) withJobPath(resource ...string) string {
+	return strings.Join(append([]string{c.root, c.workerName, c.jobID}, resource...), string(os.PathSeparator))
 }
