@@ -1,9 +1,12 @@
 package joblib
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -26,34 +29,33 @@ var (
 
 const (
 	CgroupRoot = "/sys/fs/cgroup"
-
-	ExitSuccess      = 0
-	ExitProcessError = 1
 )
 
 // Job Contains information to interact with jobs.
 type Job struct {
 	id             string
-	processCmd     *exec.Cmd
-	forkCmd        *exec.Cmd
+	command        *exec.Cmd
 	resourceLimits Resources
 	cgroup         *cgroup
 	stdout         io.Reader
 	stderr         io.Reader
+	stdoutBuf      *bytes.Buffer // Used to persist stdout
+	stderrBuf      *bytes.Buffer // Used to persist stderr
 }
 
 // Resources cgroup limits that can be configured for jobs.
 type Resources struct {
-	MemoryBytes   uint64
 	CPUPercentage int
 	DiskIOBps     int
+	MemoryBytes   uint64
 }
 
 // cgroup Information used to construct a job's cgroup.
 type cgroup struct {
+	fd         int
+	jobID      string
 	root       string
 	workerName string
-	jobID      string
 }
 
 // newCgroup Creates a new cgroup for the given job.
@@ -69,9 +71,13 @@ func newCgroup(cgroupRoot string, workerName string, jobID string) (*cgroup, err
 	logger.Debug("Creating new cgroup", "path", jobPath)
 
 	if err := os.MkdirAll(jobPath, 0644); err != nil {
-		logger.Error("Failed to create cgroup", "err", err)
+		return nil, errors.Join(errors.New("failed to create cgroup"), err)
+	}
 
+	if f, err := os.Open(jobPath); err != nil {
 		return nil, err
+	} else {
+		cg.fd = int(f.Fd())
 	}
 
 	return cg, nil
@@ -88,12 +94,35 @@ func NewJob(workerName string, resourceLimits Resources, command string, args ..
 		return nil, err
 	}
 
+	cmd := exec.Command(command, args...)
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags:  syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
+		UseCgroupFD: true,
+		CgroupFD:    cg.fd,
+	}
+
+	stdoutPipe, err := cmd.StdoutPipe()
+
+	if err != nil {
+		return nil, err
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+
+	if err != nil {
+		return nil, err
+	}
+
 	return &Job{
 		id:             id,
-		processCmd:     exec.Command(command, args...),
-		forkCmd:        exec.Command("/proc/self/exe", "job"),
+		command:        cmd,
 		resourceLimits: resourceLimits,
 		cgroup:         cg,
+		stdout:         stdoutPipe,
+		stderr:         stderrPipe,
+		stdoutBuf:      new(bytes.Buffer),
+		stderrBuf:      new(bytes.Buffer),
 	}, nil
 }
 
@@ -103,18 +132,42 @@ func (j *Job) ID() string {
 }
 
 // Start Begin execution of the job's command immediately.
-func (j *Job) Start() {
-	logger.Debug("Starting job", "args", os.Args, "ppid", os.Getppid(), "pid", os.Getpid())
+func (j *Job) Start() error {
+	logger.Debug("Starting job", "id", j.id, "command", j.command.String())
 
-	if len(os.Args) > 1 && os.Args[1] == "job" {
-		logger.Info("Starting job process", "id", j.id, "process", j.processCmd.String())
-
-		j.runProcess()
-	} else {
-		logger.Info("Starting job", "id", j.id)
-
-		j.fork()
+	if err := j.cgroup.configure(j.resourceLimits); err != nil {
+		return err
 	}
+
+	if err := j.command.Start(); err != nil {
+		return err
+	}
+
+	go func() {
+		defer j.cgroup.cleanup()
+
+		nStdout, err := j.stdoutBuf.ReadFrom(j.stdout)
+
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		logger.Debug("Read from stdout to buffer", "bytes", nStdout)
+
+		nStderr, err := j.stderrBuf.ReadFrom(j.stderr)
+
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		logger.Debug("Read from stderr to buffer", "bytes", nStderr)
+
+		if err := j.command.Wait(); err != nil {
+			log.Fatalf("Failed to wait on command: %s\n", err)
+		}
+	}()
+
+	return nil
 }
 
 // Stop End execution of the job immediately.
@@ -122,96 +175,18 @@ func (j *Job) Start() {
 func (j *Job) Stop() error {
 	logger.Info("Stopping job", "id", j.id)
 
-	return j.forkCmd.Process.Signal(syscall.SIGTERM)
+	return j.command.Process.Kill()
 }
 
 // Output Get the full output (stdout and stderr) from the job.
 func (j *Job) Output() (io.Reader, io.Reader) {
-	return j.stdout, j.stderr
+	log.Printf("Library buffer size: %d\n", j.stdoutBuf.Len())
+
+	return bytes.NewReader(j.stdoutBuf.Bytes()), bytes.NewReader(j.stderrBuf.Bytes())
 }
 
-// fork Fork from the main execution process and store the child's output pipes to be referenced in the parent process.
-func (j *Job) fork() {
-	rStdout, wStdout, err := os.Pipe()
-
-	if err != nil {
-		logger.Error("Failed to create stdout pipe", "err", err)
-
-		return
-	}
-
-	rStderr, wStderr, err := os.Pipe()
-
-	if err != nil {
-		logger.Error("Failed to create stderr pipe", "err", err)
-
-		return
-	}
-
-	j.stdout = rStdout
-	j.stderr = rStderr
-
-	go func() {
-		defer wStdout.Close()
-		defer wStderr.Close()
-
-		j.forkCmd.Stdout = wStdout
-		j.forkCmd.Stderr = wStderr
-		j.forkCmd.SysProcAttr = &syscall.SysProcAttr{
-			Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
-		}
-
-		if err := j.forkCmd.Start(); err != nil {
-			logger.Error("Failed to fork job", "id", j.id, "err", err)
-
-			return
-		}
-
-		logger.Debug("Waiting for job to run", "id", j.id)
-
-		if err := j.forkCmd.Wait(); err != nil {
-			logger.Error("Job failed", "id", j.id, "err", err)
-
-			return
-		}
-
-		logger.Info("Job completed successfully", "id", j.id)
-	}()
-}
-
-// runProcess run the process that the job owns.
-func (j *Job) runProcess() {
-	pid := os.Getpid()
-
-	if err := j.cgroup.setup(pid, j.resourceLimits); err != nil {
-		logger.Error("Cgroup setup failed", "err", err)
-
-		os.Exit(ExitProcessError)
-	}
-
-	j.processCmd.Stdin = os.Stdin
-	j.processCmd.Stdout = os.Stdout
-	j.processCmd.Stderr = os.Stderr
-
-	if err := j.processCmd.Start(); err != nil {
-		logger.Error("Failed to start job process", "id", j.id, "process", j.processCmd.String())
-
-		os.Exit(ExitProcessError)
-	}
-
-	if err := j.processCmd.Wait(); err != nil {
-		logger.Error("Job process failed", "id", j.id, "err", err)
-
-		os.Exit(ExitProcessError)
-	}
-
-	logger.Debug("Job process completed successfully")
-
-	os.Exit(ExitSuccess)
-}
-
-// setup Restricts the given PID to the given resource limits.
-func (c *cgroup) setup(pid int, resourceLimits Resources) error {
+// configure Configure a cgroup with the given resource limits.
+func (c *cgroup) configure(resourceLimits Resources) error {
 	if err := c.setSubtreeController("+memory +cpu +io"); err != nil {
 		return err
 	}
@@ -228,28 +203,13 @@ func (c *cgroup) setup(pid int, resourceLimits Resources) error {
 		return err
 	}
 
-	if err := c.addProc(pid); err != nil {
-		return err
-	}
-
 	return nil
 }
 
-// addProc Adds the given PID to the list of processes to have their resources managed.
-func (c *cgroup) addProc(pid int) error {
-	f, err := os.OpenFile(c.withJobPath("cgroup.procs"), os.O_WRONLY, 0644)
-
-	if err != nil {
-		return err
+func (c *cgroup) cleanup() {
+	if err := os.RemoveAll(c.withJobPath()); err != nil {
+		logger.Error("Failed to cleanup cgroup", "err", err)
 	}
-
-	defer f.Close()
-
-	if err := c.setResource(f, strconv.Itoa(pid)); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // setMemory Set the maximum amount of memory the job can use.
