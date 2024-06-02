@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"io"
-	"log"
 	"log/slog"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -41,8 +41,8 @@ type Job struct {
 
 // Resources cgroup limits that can be configured for jobs.
 type Resources struct {
-	CPUPercentage int
-	DiskIOBps     int
+	CPUPercentage int32
+	DiskIOBps     int32
 	MemoryBytes   uint64
 }
 
@@ -103,9 +103,10 @@ func NewJob(workerName string, resourceLimits Resources, command string, args ..
 	cmd := exec.Command(command, args...)
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags:  syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
-		UseCgroupFD: true,
 		CgroupFD:    cg.fd,
+		Pdeathsig:   syscall.SIGKILL,
+		Setpgid:     true,
+		UseCgroupFD: true,
 	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -137,6 +138,11 @@ func (j *Job) ID() string {
 	return j.id
 }
 
+// Command Returns the job's command with its arguments.
+func (j *Job) Command() (string, []string) {
+	return j.command.Path, j.command.Args
+}
+
 // Start Begin execution of the job's command immediately.
 func (j *Job) Start() error {
 	logger.Info("Starting job", "id", j.id, "command", j.command)
@@ -145,17 +151,26 @@ func (j *Job) Start() error {
 		return err
 	}
 
-	if err := j.command.Start(); err != nil {
-		return err
-	}
-
 	go func() {
+		runtime.LockOSThread()
+
+		defer runtime.UnlockOSThread()
 		defer j.cgroup.cleanup()
+
+		if err := j.command.Start(); err != nil {
+			logger.Error("Failed to start job", "err", err)
+
+			return
+		}
+
+		logger.Debug("Started job command", "pid", j.command.Process.Pid)
 
 		nStdout, err := j.stdoutBuf.ReadFrom(j.stdout)
 
 		if err != nil {
-			log.Fatalln(err)
+			logger.Error("Failed to set buffer for stdout", "err", err)
+
+			return
 		}
 
 		logger.Debug("Read from stdout to buffer", "bytes", nStdout)
@@ -163,7 +178,9 @@ func (j *Job) Start() error {
 		nStderr, err := j.stderrBuf.ReadFrom(j.stderr)
 
 		if err != nil {
-			log.Fatalln(err)
+			logger.Error("Failed to set buffer for stderr", "err", err)
+
+			return
 		}
 
 		logger.Debug("Read from stderr to buffer", "bytes", nStderr)
@@ -237,12 +254,15 @@ func (c *cgroup) setMemory(memoryMax uint64) error {
 	} else {
 		defer f.Close()
 
-		return c.setResource(f, strconv.FormatUint(memoryMax, 10))
+		value := strconv.FormatUint(memoryMax, 10)
+		logger.Debug("Setting memory limit", "path", f.Name(), "value", value)
+
+		return c.setResource(f, value)
 	}
 }
 
 // setCPU Set the maximum amount of CPU the job can use as a percentage.
-func (c *cgroup) setCPU(percentage int) error {
+func (c *cgroup) setCPU(percentage int32) error {
 	period := 1 * time.Second
 	quota := period.Microseconds() * int64(percentage)
 
@@ -251,24 +271,28 @@ func (c *cgroup) setCPU(percentage int) error {
 	} else {
 		defer f.Close()
 
-		return c.setResource(f, fmt.Sprintf("%d %d\n", quota, period.Microseconds()))
+		value := fmt.Sprintf("%d %d\n", quota, period.Microseconds())
+		logger.Debug("Setting CPU limit", "path", f.Name(), "value", value)
+
+		return c.setResource(f, value)
 	}
 }
 
 // setDiskIO Set the maximum amount of disk IO the job can use on a given partition.
-func (c *cgroup) setDiskIO(bytesSec int, part partition) error {
+func (c *cgroup) setDiskIO(bytesSec int32, part partition) error {
 	if part.minor != "0" {
 		logger.Warn("Refusing to set IO limit, IO limits can only be set for physical devices", "partition", part)
 
 		return nil
 	}
 
-	value := fmt.Sprintf("%s:%s rbps=%d wbps=%d", part.major, part.minor, bytesSec, bytesSec)
-
 	if f, err := os.OpenFile(c.withJobPath("io.max"), os.O_WRONLY, 0644); err != nil {
 		return err
 	} else {
 		defer f.Close()
+
+		value := fmt.Sprintf("%s:%s rbps=%d wbps=%d", part.major, part.minor, bytesSec, bytesSec)
+		logger.Debug("Setting IO limit", "path", f.Name(), "value", value)
 
 		return c.setResource(f, value)
 	}
