@@ -1,8 +1,8 @@
 package joblib
 
 import (
+	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"io"
@@ -25,10 +25,6 @@ var (
 			Level:     slog.LevelDebug,
 		},
 	))
-)
-
-const (
-	CgroupRoot = "/sys/fs/cgroup"
 )
 
 // Job Contains information to interact with jobs.
@@ -58,6 +54,14 @@ type cgroup struct {
 	workerName string
 }
 
+// partition Disk partition information.
+type partition struct {
+	major     string
+	minor     string
+	numBlocks string
+	name      string
+}
+
 // newCgroup Creates a new cgroup for the given job.
 func newCgroup(cgroupRoot string, workerName string, jobID string) (*cgroup, error) {
 	cg := &cgroup{
@@ -71,7 +75,9 @@ func newCgroup(cgroupRoot string, workerName string, jobID string) (*cgroup, err
 	logger.Debug("Creating new cgroup", "path", jobPath)
 
 	if err := os.MkdirAll(jobPath, 0644); err != nil {
-		return nil, errors.Join(errors.New("failed to create cgroup"), err)
+		logger.Error("Failed to create cgroup", "path", jobPath)
+
+		return nil, err
 	}
 
 	if f, err := os.Open(jobPath); err != nil {
@@ -88,7 +94,7 @@ func NewJob(workerName string, resourceLimits Resources, command string, args ..
 	logger.Debug("Creating new job", "workerName", workerName, "resourceLimits", resourceLimits, "command", command, "args", args)
 
 	id := uuid.NewString()
-	cg, err := newCgroup(CgroupRoot, workerName, id)
+	cg, err := newCgroup("/sys/fs/cgroup", workerName, id)
 
 	if err != nil {
 		return nil, err
@@ -133,7 +139,7 @@ func (j *Job) ID() string {
 
 // Start Begin execution of the job's command immediately.
 func (j *Job) Start() error {
-	logger.Debug("Starting job", "id", j.id, "command", j.command.String())
+	logger.Info("Starting job", "id", j.id, "command", j.command)
 
 	if err := j.cgroup.configure(j.resourceLimits); err != nil {
 		return err
@@ -161,27 +167,24 @@ func (j *Job) Start() error {
 		}
 
 		logger.Debug("Read from stderr to buffer", "bytes", nStderr)
-
-		if err := j.command.Wait(); err != nil {
-			log.Fatalf("Failed to wait on command: %s\n", err)
-		}
 	}()
 
 	return nil
 }
 
 // Stop End execution of the job immediately.
-// FIXME: Handle the stop signal so that the job does not exit as a failure
 func (j *Job) Stop() error {
-	logger.Info("Stopping job", "id", j.id)
+	logger.Info("Stopping job", "id", j.id, "command", j.command)
+
+	defer j.cgroup.cleanup()
 
 	return j.command.Process.Kill()
 }
 
 // Output Get the full output (stdout and stderr) from the job.
 func (j *Job) Output() (io.Reader, io.Reader) {
-	log.Printf("Library buffer size: %d\n", j.stdoutBuf.Len())
-
+	// TODO: This reader will only see what's in the buffer when it is called. If the buffer is updated, a new reader
+	// will need to be created to view the content. This should be improved.
 	return bytes.NewReader(j.stdoutBuf.Bytes()), bytes.NewReader(j.stderrBuf.Bytes())
 }
 
@@ -199,35 +202,43 @@ func (c *cgroup) configure(resourceLimits Resources) error {
 		return err
 	}
 
-	if err := c.setDiskIO(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *cgroup) cleanup() {
-	if err := os.RemoveAll(c.withJobPath()); err != nil {
-		logger.Error("Failed to cleanup cgroup", "err", err)
-	}
-}
-
-// setMemory Set the maximum amount of memory the job can use.
-// TODO: Double check the units used to limit memory (defined in kB?)
-func (c *cgroup) setMemory(memoryMax uint64) error {
-	f, err := os.OpenFile(c.withJobPath("memory.max"), os.O_WRONLY, 0644)
+	partitions, err := getPartitions()
 
 	if err != nil {
 		return err
 	}
 
-	defer f.Close()
-
-	if err := c.setResource(f, strconv.FormatUint(memoryMax, 10)); err != nil {
-		return err
+	// For this exercise, let's just set the IO limit for reads and writes to all partitions.
+	for _, part := range partitions {
+		if err := c.setDiskIO(resourceLimits.DiskIOBps, part); err != nil {
+			logger.Warn("Failed to set disk IO", "partition", part, "err", err)
+		}
 	}
 
 	return nil
+}
+
+// cleanup Remove cgroup files created for the job.
+func (c *cgroup) cleanup() {
+	if err := os.RemoveAll(c.withJobPath()); err != nil {
+		logger.Error("Failed to cleanup cgroup", "err", err)
+
+		return
+	}
+
+	logger.Debug("Cleaned up cgroup", "path", c.withJobPath())
+}
+
+// setMemory Set the maximum amount of memory the job can use.
+// TODO: Double check the units used to limit memory (defined in kB?)
+func (c *cgroup) setMemory(memoryMax uint64) error {
+	if f, err := os.OpenFile(c.withJobPath("memory.max"), os.O_WRONLY, 0644); err != nil {
+		return err
+	} else {
+		defer f.Close()
+
+		return c.setResource(f, strconv.FormatUint(memoryMax, 10))
+	}
 }
 
 // setCPU Set the maximum amount of CPU the job can use as a percentage.
@@ -235,32 +246,73 @@ func (c *cgroup) setCPU(percentage int) error {
 	period := 1 * time.Second
 	quota := period.Microseconds() * int64(percentage)
 
-	f, err := os.OpenFile(c.withJobPath("cpu.max"), os.O_WRONLY, 0644)
-
-	if err != nil {
+	if f, err := os.OpenFile(c.withJobPath("cpu.max"), os.O_WRONLY, 0644); err != nil {
 		return err
+	} else {
+		defer f.Close()
+
+		return c.setResource(f, fmt.Sprintf("%d %d\n", quota, period.Microseconds()))
 	}
-
-	defer f.Close()
-
-	return c.setResource(f, fmt.Sprintf("%d %d\n", quota, period.Microseconds()))
 }
 
-// setDiskIO Set the maximum amount of disk IO the job can use.
-// TODO: Implement
-func (c *cgroup) setDiskIO() error {
-	return nil
+// setDiskIO Set the maximum amount of disk IO the job can use on a given partition.
+func (c *cgroup) setDiskIO(bytesSec int, part partition) error {
+	if part.minor != "0" {
+		logger.Warn("Refusing to set IO limit, IO limits can only be set for physical devices", "partition", part)
+
+		return nil
+	}
+
+	value := fmt.Sprintf("%s:%s rbps=%d wbps=%d", part.major, part.minor, bytesSec, bytesSec)
+
+	if f, err := os.OpenFile(c.withJobPath("io.max"), os.O_WRONLY, 0644); err != nil {
+		return err
+	} else {
+		defer f.Close()
+
+		return c.setResource(f, value)
+	}
+}
+
+// getPartitions Get disk partitions available on the system.
+func getPartitions() ([]partition, error) {
+	f, err := os.Open("/proc/partitions")
+
+	if err != nil {
+		return nil, err
+	}
+
+	var partitions []partition
+
+	scanner := bufio.NewScanner(f)
+
+	// Skip the first two lines of the file, they're headers
+	scanner.Scan()
+	scanner.Scan()
+
+	for scanner.Scan() {
+		partLine := strings.Fields(scanner.Text())
+
+		part := partition{
+			major:     partLine[0],
+			minor:     partLine[1],
+			numBlocks: partLine[2],
+			name:      partLine[3],
+		}
+
+		logger.Debug("Found disk partition", "partition", partLine)
+
+		partitions = append(partitions, part)
+	}
+
+	return partitions, nil
 }
 
 // setResource Generalized function to help set resources in a unified way.
 func (c *cgroup) setResource(resource io.Writer, value string) error {
-	n, err := resource.Write([]byte(value))
-
-	if err != nil {
+	if _, err := resource.Write([]byte(value)); err != nil {
 		return err
 	}
-
-	logger.Debug("Set resource", "value", value, "bytesWritten", n)
 
 	return nil
 }
