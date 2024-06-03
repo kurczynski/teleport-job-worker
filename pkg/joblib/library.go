@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/kurczynski/teleport-job-worker/internal/clock"
 	"io"
 	"log/slog"
 	"os"
@@ -40,14 +41,23 @@ type Status string
 // Job Contains information to interact with jobs.
 type Job struct {
 	id             string
+	created        time.Time
 	status         Status
+	statusChanges  []StatusChange
 	command        *exec.Cmd
 	resourceLimits Resources
 	cgroup         *cgroup
+	clock          clock.Clock
 	stdout         io.Reader
 	stderr         io.Reader
 	stdoutBuf      *bytes.Buffer // Used to persist stdout
 	stderrBuf      *bytes.Buffer // Used to persist stderr
+}
+
+// StatusChange When the status of the job was changed.
+type StatusChange struct {
+	Status    Status
+	ChangedAt time.Time
 }
 
 // Resources cgroup limits that can be configured for jobs.
@@ -101,7 +111,7 @@ func newCgroup(cgroupRoot string, workerName string, jobID string) (*cgroup, err
 }
 
 // NewJob Create a new job to run the specified command using the given resource limits.
-func NewJob(workerName string, resourceLimits Resources, command string, args ...string) (*Job, error) {
+func NewJob(workerName string, clock clock.Clock, resourceLimits Resources, command string, args ...string) (*Job, error) {
 	logger.Debug("Creating new job", "workerName", workerName, "resourceLimits", resourceLimits, "command", command, "args", args)
 
 	id := uuid.NewString()
@@ -132,17 +142,22 @@ func NewJob(workerName string, resourceLimits Resources, command string, args ..
 		return nil, err
 	}
 
-	return &Job{
+	job := Job{
 		id:             id,
 		command:        cmd,
-		status:         ReadyStatus,
+		clock:          clock,
+		statusChanges:  make([]StatusChange, 0),
 		resourceLimits: resourceLimits,
 		cgroup:         cg,
 		stdout:         stdoutPipe,
 		stderr:         stderrPipe,
 		stdoutBuf:      new(bytes.Buffer),
 		stderrBuf:      new(bytes.Buffer),
-	}, nil
+	}
+
+	job.updateStatus(ReadyStatus)
+
+	return &job, nil
 }
 
 // ID Returns the ID of the job.
@@ -155,12 +170,24 @@ func (j *Job) Command() (string, []string) {
 	return j.command.Path, j.command.Args
 }
 
+func (j *Job) Created() time.Time {
+	return j.created
+}
+
+func (j *Job) Status() Status {
+	return j.status
+}
+
+func (j *Job) StatusChanges() []StatusChange {
+	return j.statusChanges
+}
+
 // Start Begin execution of the job's command immediately.
 func (j *Job) Start() error {
 	logger.Info("Starting job", "id", j.id, "command", j.command)
 
 	if err := j.cgroup.configure(j.resourceLimits); err != nil {
-		j.status = FailedStatus
+		j.updateStatus(FailedStatus)
 
 		return err
 	}
@@ -173,12 +200,12 @@ func (j *Job) Start() error {
 
 		if err := j.command.Start(); err != nil {
 			logger.Error("Failed to start job", "err", err)
-			j.status = FailedStatus
+			j.updateStatus(FailedStatus)
 
 			return
 		}
 
-		j.status = RunningStatus
+		j.updateStatus(RunningStatus)
 
 		logger.Debug("Started job command", "pid", j.command.Process.Pid)
 
@@ -186,7 +213,7 @@ func (j *Job) Start() error {
 
 		if err != nil {
 			logger.Error("Failed to set buffer for stdout", "err", err)
-			j.status = FailedStatus
+			j.updateStatus(FailedStatus)
 
 			return
 		}
@@ -197,7 +224,7 @@ func (j *Job) Start() error {
 
 		if err != nil {
 			logger.Error("Failed to set buffer for stderr", "err", err)
-			j.status = FailedStatus
+			j.updateStatus(FailedStatus)
 
 			return
 		}
@@ -209,12 +236,12 @@ func (j *Job) Start() error {
 
 		if err != nil {
 			logger.Error("Failed waiting for command to finish", "err", err)
-			j.status = FailedStatus
+			j.updateStatus(FailedStatus)
 
 			return
 		}
 
-		j.status = SucceededStatus
+		j.updateStatus(SucceededStatus)
 	}()
 
 	return nil
@@ -227,11 +254,11 @@ func (j *Job) Stop() error {
 	defer j.cgroup.cleanup()
 
 	if err := j.command.Process.Kill(); err != nil {
-		j.status = FailedStatus
+		j.updateStatus(FailedStatus)
 
 		return err
 	} else {
-		j.status = StoppedStatus
+		j.updateStatus(StoppedStatus)
 
 		return nil
 	}
@@ -242,6 +269,14 @@ func (j *Job) Output() (io.Reader, io.Reader) {
 	// TODO: This reader will only see what's in the buffer when it is called. If the buffer is updated, a new reader
 	// will need to be created to view the content. This should be improved.
 	return bytes.NewReader(j.stdoutBuf.Bytes()), bytes.NewReader(j.stderrBuf.Bytes())
+}
+
+// updateStatus Update the job's status and record the time when it changed.
+func (j *Job) updateStatus(status Status) {
+	now := j.clock.Now()
+	j.status = status
+
+	j.statusChanges = append(j.statusChanges, StatusChange{Status: status, ChangedAt: now})
 }
 
 // configure Configure a cgroup with the given resource limits.
