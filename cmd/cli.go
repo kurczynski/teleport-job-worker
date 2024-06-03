@@ -5,16 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"github.com/kurczynski/teleport-job-worker/api/proto/job"
+	"github.com/kurczynski/teleport-job-worker/internal/logging"
 	"github.com/kurczynski/teleport-job-worker/pkg/cli/commands"
+	"github.com/kurczynski/teleport-job-worker/pkg/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"log"
 	"log/slog"
 	"os"
-)
-
-var (
-	CLILogger *slog.Logger
 )
 
 func main() {
@@ -71,18 +69,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	CLILogger = slog.New(slog.NewTextHandler(
+	logHandler := slog.NewTextHandler(
 		os.Stdout,
 		&slog.HandlerOptions{
 			AddSource: false,
 			Level:     logLevel,
 		},
-	))
+	)
 
-	cert, err := configureCert()
+	logging.Setup(logHandler)
+
+	cert, err := config.ConfigureCert()
 
 	if err != nil {
-		CLILogger.Error("Failed to configure certificate", "err", err)
+		logging.Log.Error("Failed to configure certificate", "err", err)
 
 		os.Exit(2)
 	}
@@ -92,7 +92,7 @@ func main() {
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	CLILogger.Info("Connecting to server", "host", hostArg, "port", portArg)
+	logging.Log.Info("Connecting to server", "host", hostArg, "port", portArg)
 
 	conn, err := grpc.NewClient(
 		fmt.Sprintf("%s:%d", hostArg, portArg),
@@ -100,7 +100,7 @@ func main() {
 	)
 
 	if err != nil {
-		CLILogger.Error("Failed to create client", "err", err)
+		logging.Log.Error("Failed to create client", "err", err)
 
 		os.Exit(1)
 	}
@@ -109,50 +109,11 @@ func main() {
 
 	client := job.NewJobClient(conn)
 
-	CLILogger.Info("Successfully connected to server", "host", hostArg, "port", portArg)
+	logging.Log.Info("Successfully connected to server", "host", hostArg, "port", portArg)
 
 	cmd.SetClient(client)
 
 	cmd.Run()
-}
-
-func configureCert() (*tls.Certificate, error) {
-	// TODO: Document
-	certDir := os.Getenv("CLI_CERT_DIR")
-
-	if certDir == "" {
-		certDir = "config/certs"
-	}
-
-	CLILogger.Info("Set certificate directory", "path", certDir)
-
-	if err := os.Setenv("SSL_CERT_DIR", certDir); err != nil {
-		return nil, err
-	}
-
-	// TODO: Document
-	certFile := os.Getenv("CLI_CERT_FILE")
-
-	if certFile == "" {
-		certFile = "config/certs/client-cert.pem"
-	}
-
-	CLILogger.Info("Using certificate file", "path", certFile)
-
-	// TODO: Document
-	keyFile := os.Getenv("CLI_KEY_FILE")
-
-	if keyFile == "" {
-		keyFile = "config/certs/client-key.pem"
-	}
-
-	CLILogger.Info("Using certificate key", "path", keyFile)
-
-	if cert, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
-		return nil, err
-	} else {
-		return &cert, nil
-	}
 }
 
 func parseLogLevel(levelName string) (slog.Level, error) {
