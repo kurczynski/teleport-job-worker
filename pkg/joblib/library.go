@@ -27,9 +27,20 @@ var (
 	))
 )
 
+const (
+	ReadyStatus     = Status("ready")
+	RunningStatus   = Status("running")
+	StoppedStatus   = Status("stopped")
+	FailedStatus    = Status("failed")
+	SucceededStatus = Status("succeeded")
+)
+
+type Status string
+
 // Job Contains information to interact with jobs.
 type Job struct {
 	id             string
+	status         Status
 	command        *exec.Cmd
 	resourceLimits Resources
 	cgroup         *cgroup
@@ -124,6 +135,7 @@ func NewJob(workerName string, resourceLimits Resources, command string, args ..
 	return &Job{
 		id:             id,
 		command:        cmd,
+		status:         ReadyStatus,
 		resourceLimits: resourceLimits,
 		cgroup:         cg,
 		stdout:         stdoutPipe,
@@ -148,6 +160,8 @@ func (j *Job) Start() error {
 	logger.Info("Starting job", "id", j.id, "command", j.command)
 
 	if err := j.cgroup.configure(j.resourceLimits); err != nil {
+		j.status = FailedStatus
+
 		return err
 	}
 
@@ -159,9 +173,12 @@ func (j *Job) Start() error {
 
 		if err := j.command.Start(); err != nil {
 			logger.Error("Failed to start job", "err", err)
+			j.status = FailedStatus
 
 			return
 		}
+
+		j.status = RunningStatus
 
 		logger.Debug("Started job command", "pid", j.command.Process.Pid)
 
@@ -169,6 +186,7 @@ func (j *Job) Start() error {
 
 		if err != nil {
 			logger.Error("Failed to set buffer for stdout", "err", err)
+			j.status = FailedStatus
 
 			return
 		}
@@ -179,11 +197,24 @@ func (j *Job) Start() error {
 
 		if err != nil {
 			logger.Error("Failed to set buffer for stderr", "err", err)
+			j.status = FailedStatus
 
 			return
 		}
 
 		logger.Debug("Read from stderr to buffer", "bytes", nStderr)
+
+		// TODO: Check how this interacts with piped stdout and stderr
+		err = j.command.Wait()
+
+		if err != nil {
+			logger.Error("Failed waiting for command to finish", "err", err)
+			j.status = FailedStatus
+
+			return
+		}
+
+		j.status = SucceededStatus
 	}()
 
 	return nil
@@ -195,7 +226,15 @@ func (j *Job) Stop() error {
 
 	defer j.cgroup.cleanup()
 
-	return j.command.Process.Kill()
+	if err := j.command.Process.Kill(); err != nil {
+		j.status = FailedStatus
+
+		return err
+	} else {
+		j.status = StoppedStatus
+
+		return nil
+	}
 }
 
 // Output Get the full output (stdout and stderr) from the job.
