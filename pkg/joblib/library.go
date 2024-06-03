@@ -145,6 +145,7 @@ func NewJob(workerName string, clock clock.Clock, resourceLimits Resources, comm
 	job := Job{
 		id:             id,
 		command:        cmd,
+		created:        clock.Now(),
 		clock:          clock,
 		statusChanges:  make([]StatusChange, 0),
 		resourceLimits: resourceLimits,
