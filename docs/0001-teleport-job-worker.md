@@ -62,6 +62,14 @@ functionality of the [API](#api). This is what they will look like in the CLI:
   ```
   Returns all the output for the job that matches the provided ID.
 
+Note that paths used for certificate files in the CLI can be configured setting these environment variables:
+
+* `CLI_CERT_DIR`
+* `CLI_CERT_FILE`
+* `CLI_KEY_FILE`
+
+Their default values can be found [here](../pkg/config/certs.go).
+
 ### Process Execution
 
 Jobs will be forked from the service's process and contain exactly one process that it manages. A job must have one of
