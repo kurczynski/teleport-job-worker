@@ -72,6 +72,7 @@ func NewCgroup(cgroupRoot string, workerName string, jobID string) (*Cgroup, err
 	return cg, nil
 }
 
+// FD Returns the cgroup file descriptor.
 func (c *Cgroup) FD() int {
 	return c.fd
 }
@@ -117,8 +118,7 @@ func (c *Cgroup) Cleanup() {
 	logger.Debug("Cleaned up cgroup", "path", c.withJobPath())
 }
 
-// setMemory Set the maximum amount of memory the job can use.
-// TODO: Double check the units used to limit memory (defined in kB?)
+// setMemory Set the maximum amount of memory the job can use in bytes.
 func (c *Cgroup) setMemory(memoryMax uint64) error {
 	if f, err := os.OpenFile(c.withJobPath("memory.max"), os.O_WRONLY, 0644); err != nil {
 		return err

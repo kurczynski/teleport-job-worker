@@ -111,14 +111,17 @@ func (j *Job) Command() (string, []string) {
 	return j.command.Path, j.command.Args
 }
 
+// Created Returns when the job was initially created.
 func (j *Job) Created() time.Time {
 	return j.created
 }
 
+// Status Returns the current status of the job.
 func (j *Job) Status() Status {
 	return j.status
 }
 
+// StatusChanges Returns what status changes the job has gone through along with a timestamp of when.
 func (j *Job) StatusChanges() []StatusChange {
 	return j.statusChanges
 }
@@ -150,7 +153,6 @@ func (j *Job) Start() error {
 
 		logger.Debug("Started job command", "pid", j.command.Process.Pid)
 
-		// TODO: Check how this interacts with piped stdout and stderr
 		err := j.command.Wait()
 
 		if err != nil {
