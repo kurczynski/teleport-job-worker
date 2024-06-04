@@ -33,7 +33,7 @@ type Cgroup struct {
 // Resources cgroup limits that can be configured for jobs.
 type Resources struct {
 	CPUPercentage int32
-	DiskIOBps     int32
+	DiskIOBPS     int32
 	MemoryBytes   uint64
 }
 
@@ -99,7 +99,7 @@ func (c *Cgroup) Configure(resourceLimits Resources) error {
 
 	// For this exercise, let's just set the IO limit for reads and writes to all partitions.
 	for _, part := range partitions {
-		if err := c.setDiskIO(resourceLimits.DiskIOBps, part); err != nil {
+		if err := c.setDiskIO(resourceLimits.DiskIOBPS, part); err != nil {
 			logger.Warn("Failed to set disk IO", "partition", part, "err", err)
 		}
 	}
