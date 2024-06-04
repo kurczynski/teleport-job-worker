@@ -1,0 +1,11 @@
+{
+  "workerName": "job-worker",
+  "port": 8443,
+  "host": "localhost",
+  "logLevel": "debug",
+  "certs": {
+    "certFile": "config/certs/server-cert.pem",
+    "keyFile": "config/certs/server-key.pem",
+    "certDir": "config/certs"
+  }
+}
