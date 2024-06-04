@@ -17,7 +17,10 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		log.Printf("A command must be specified\n")
+		fmt.Printf(
+			"A command must be specified; options are: %s, %s, %s, %s\n",
+			commands.Start, commands.Stop, commands.Query, commands.Output,
+		)
 
 		os.Exit(1)
 	}
@@ -39,7 +42,7 @@ func main() {
 		cmd = &commands.OutputCmd{}
 		flagSet = flag.NewFlagSet(commands.Output, flag.ExitOnError)
 	default:
-		log.Printf(
+		fmt.Printf(
 			"Invalid command argument; options are: %s, %s, %s, %s\n",
 			commands.Start, commands.Stop, commands.Query, commands.Output,
 		)
@@ -112,7 +115,6 @@ func main() {
 	logging.Log.Info("Successfully connected to server", "host", hostArg, "port", portArg)
 
 	cmd.SetClient(client)
-
 	cmd.Run()
 }
 

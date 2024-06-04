@@ -3,11 +3,10 @@ package commands
 import (
 	"context"
 	"flag"
+	"fmt"
 	"github.com/kurczynski/teleport-job-worker/api/proto/job"
-	"log"
 	"os"
 	"strings"
-	"time"
 )
 
 type StartCmd struct {
@@ -31,7 +30,7 @@ func (s *StartCmd) ParseCLI(set *flag.FlagSet) error {
 	cpuArg := set.Int("cpu-limit", 0, "maximum percentage of CPU the job command can use")
 	diskIOArg := set.Int("io-limit", 0, "maximum bytes per second the job command can read and write")
 
-	if err := set.Parse(os.Args[2:]); err != nil {
+	if err := parseOSArgs(set); err != nil {
 		return err
 	}
 
@@ -45,7 +44,7 @@ func (s *StartCmd) ParseCLI(set *flag.FlagSet) error {
 }
 
 func (s *StartCmd) Run() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultCtxTimeout)
 	defer cancel()
 
 	cmd := &job.Command{
@@ -62,10 +61,10 @@ func (s *StartCmd) Run() {
 	resp, err := s.client.Start(ctx, &job.StartRequest{Command: cmd, ResourceLimits: resourceLimits})
 
 	if err != nil {
-		log.Println(err)
+		fmt.Println(err)
 
 		os.Exit(1)
 	}
 
-	log.Printf("Job ID: %s\n", resp.Info.ID)
+	fmt.Println(resp.Info.ID)
 }

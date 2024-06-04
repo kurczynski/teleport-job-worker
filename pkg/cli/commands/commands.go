@@ -3,14 +3,17 @@ package commands
 import (
 	"flag"
 	"github.com/kurczynski/teleport-job-worker/api/proto/job"
+	"os"
+	"time"
 )
 
-// Command constants that can be used in the CLI.
 const (
 	Start  = "start"
 	Stop   = "stop"
 	Query  = "query"
 	Output = "output"
+
+	DefaultCtxTimeout = 10 * time.Second
 )
 
 type Command interface {
@@ -20,4 +23,9 @@ type Command interface {
 	Run()
 	// SetClient Set the client to communicate with the API server.
 	SetClient(job.JobClient)
+}
+
+// parseOSArgs Helper method to parse the OS args position array for the commands.
+func parseOSArgs(set *flag.FlagSet) error {
+	return set.Parse(os.Args[2:])
 }
