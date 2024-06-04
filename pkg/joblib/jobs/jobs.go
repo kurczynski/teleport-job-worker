@@ -1,15 +1,15 @@
 package jobs
 
 import (
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/kurczynski/teleport-job-worker/internal/clock"
 	"github.com/kurczynski/teleport-job-worker/pkg/joblib/cgroups"
-	"io"
-	"log"
 	"log/slog"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -45,11 +45,8 @@ type Job struct {
 	resourceLimits cgroups.Resources
 	cgroup         *cgroups.Cgroup
 	clock          clock.Clock
-	stdout         *io.PipeReader
-	stderr         *io.PipeReader
-
-	stdoutBufWrite *io.PipeWriter
-	stdoutBufRead  *io.PipeReader
+	stdoutFilename string
+	stderrFilename string
 }
 
 // StatusChange When the status of the job was changed.
@@ -71,12 +68,6 @@ func NewJob(workerName string, clock clock.Clock, resourceLimits cgroups.Resourc
 
 	cmd := exec.Command(command, args...)
 
-	stdoutReader, stdoutWriter := io.Pipe()
-	stderrReader, stderrWriter := io.Pipe()
-
-	cmd.Stdout = stdoutWriter
-	cmd.Stderr = stderrWriter
-
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CgroupFD:    cg.FD(),
 		Pdeathsig:   syscall.SIGKILL,
@@ -92,8 +83,8 @@ func NewJob(workerName string, clock clock.Clock, resourceLimits cgroups.Resourc
 		statusChanges:  make([]StatusChange, 0),
 		resourceLimits: resourceLimits,
 		cgroup:         cg,
-		stdout:         stdoutReader,
-		stderr:         stderrReader,
+		stdoutFilename: strings.Join([]string{"/tmp", fmt.Sprintf("%s-%s", id, "stdout")}, string(os.PathSeparator)),
+		stderrFilename: strings.Join([]string{"/tmp", fmt.Sprintf("%s-%s", id, "stderr")}, string(os.PathSeparator)),
 	}
 
 	job.updateStatus(ReadyStatus)
@@ -104,6 +95,11 @@ func NewJob(workerName string, clock clock.Clock, resourceLimits cgroups.Resourc
 // ID Returns the ID of the job.
 func (j *Job) ID() string {
 	return j.id
+}
+
+// Limits Returns the resource limits of the job.
+func (j *Job) Limits() cgroups.Resources {
+	return j.resourceLimits
 }
 
 // Command Returns the job's command with its arguments.
@@ -142,6 +138,31 @@ func (j *Job) Start() error {
 		defer runtime.UnlockOSThread()
 		defer j.cgroup.Cleanup()
 
+		stdout, err := os.OpenFile(j.stdoutFilename, os.O_WRONLY|os.O_CREATE, 0644)
+
+		if err != nil {
+			logger.Error("Failed to open stdout", "err", err)
+			j.updateStatus(FailedStatus)
+
+			return
+		}
+
+		defer stdout.Close()
+
+		stderr, err := os.OpenFile(j.stderrFilename, os.O_WRONLY|os.O_CREATE, 0644)
+
+		if err != nil {
+			logger.Error("Failed to open stderr", "err", err)
+			j.updateStatus(FailedStatus)
+
+			return
+		}
+
+		defer stderr.Close()
+
+		j.command.Stdout = stdout
+		j.command.Stderr = stderr
+
 		if err := j.command.Start(); err != nil {
 			logger.Error("Failed to start job", "err", err)
 			j.updateStatus(FailedStatus)
@@ -153,24 +174,10 @@ func (j *Job) Start() error {
 
 		logger.Debug("Started job command", "pid", j.command.Process.Pid)
 
-		err := j.command.Wait()
-
-		if err != nil {
+		if err := j.command.Wait(); err != nil {
 			logger.Error("Failed waiting for command to finish", "err", err)
 			j.updateStatus(FailedStatus)
 
-			return
-		}
-
-		err = j.stdout.Close()
-		if err != nil {
-			log.Fatalf("stdout pipe close failed: %s\n", err)
-			return
-		}
-
-		err = j.stderr.Close()
-		if err != nil {
-			log.Fatalf("stderr pipe close failed: %s\n", err)
 			return
 		}
 
@@ -185,6 +192,7 @@ func (j *Job) Stop() error {
 	logger.Info("Stopping job", "id", j.id, "command", j.command)
 
 	defer j.cgroup.Cleanup()
+	defer j.cleanup()
 
 	if err := j.command.Process.Kill(); err != nil {
 		j.updateStatus(FailedStatus)
@@ -198,8 +206,29 @@ func (j *Job) Stop() error {
 }
 
 // Output Get the full output (stdout and stderr) from the job.
-func (j *Job) Output() (io.Reader, io.Reader) {
-	return j.stdout, j.stderr
+func (j *Job) Output() (*os.File, *os.File, error) {
+	logger.Debug("Getting job output")
+
+	var stdout *os.File
+	var stderr *os.File
+
+	if fout, err := os.Open(j.stdoutFilename); err != nil {
+		return nil, nil, err
+	} else {
+		stdout = fout
+	}
+
+	logger.Debug("Opened stdout", "path", stdout.Name())
+
+	if ferr, err := os.Open(j.stderrFilename); err != nil {
+		return nil, nil, err
+	} else {
+		stderr = ferr
+	}
+
+	logger.Debug("Opened stderr", "path", stderr.Name())
+
+	return stdout, stderr, nil
 }
 
 // updateStatus Update the job's status and record the time when it changed.
@@ -208,4 +237,15 @@ func (j *Job) updateStatus(status Status) {
 	j.status = status
 
 	j.statusChanges = append(j.statusChanges, StatusChange{Status: status, ChangedAt: now})
+}
+
+// cleanup Cleanup files used to store output from the job's command.
+func (j *Job) cleanup() {
+	if err := os.Remove(j.stdoutFilename); err != nil {
+		logger.Error("Failed to remove stdout", "path", j.stdoutFilename)
+	}
+
+	if err := os.Remove(j.stderrFilename); err != nil {
+		logger.Error("Failed to remove stderr", "path", j.stderrFilename)
+	}
 }
