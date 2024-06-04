@@ -1,5 +1,5 @@
-CLIENT := client
-SERVER := server
+CLIENT := cli
+SERVER := api-server
 
 CERT_HOST := localhost
 CERT_PATH := config/certs
@@ -7,6 +7,14 @@ CERT_TYPE := rsa:4096
 CERT_CONSTRAINTS := critical,CA:false
 
 PROTO_PATH := api/proto
+
+build: build-pb build-cli build-api
+
+build-cli:
+	go build -o $(CLIENT) cmd/$(CLIENT).go
+
+build-api:
+	go build -o $(SERVER) cmd/$(SERVER).go
 
 create-certs:
 	mkdir -p $(CERT_PATH)
