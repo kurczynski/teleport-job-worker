@@ -110,7 +110,8 @@ The service will implement the following protobufs:
 
 ### API
 
-The service's API will contain the resources listed below and be made available using gRPC.
+The service's API will contain the resources listed below and be made available using gRPC. The API has settings that
+can be managed in its [configuration file](../config/server.json).
 
 #### job
 
@@ -129,13 +130,22 @@ Details of a job's functions are listed in [job.proto](../api/proto/job/job.prot
 ### Library Godoc
 
 ```
-package library // import "github.com/kurczynski/teleport-job-worker/pkg/library"
+package library // import "github.com/kurczynski/teleport-job-worker/pkg/joblib/jobs"
 
 TYPES
+
+// Status Status of the job.
+type Status string
 
 // Job Contains information to interact with jobs.
 type Job struct {
 	// Has unexported fields.
+}
+
+// StatusChange When the status of the job was changed.
+type StatusChange struct {
+	Status    Status
+	ChangedAt time.Time
 }
 
 // Resources cgroup limits that can be configured for jobs.
@@ -145,11 +155,26 @@ type Resources struct {
 	DiskIOBps     int32
 }
 
-// NewJob Create a new job to run the specified command.
-func NewJob(command string, args ...string) *Job
+// NewJob Create a new job to run the specified command using the given resource limits.
+func NewJob(workerName string, clock clock.Clock, resourceLimits cgroups.Resources, command string, args ...string) (*Job, error)
 
 // ID Returns the ID of the job.
 func (j *Job) ID() string
+
+// Limits Returns the resource limits of the job.
+func (j *Job) Limits() cgroups.Resources
+
+// Command Returns the job's command with its arguments.
+func (j *Job) Command() (string, []string)
+
+// Created Returns when the job was initially created.
+func (j *Job) Created() time.Time
+
+// Status Returns the current status of the job.
+func (j *Job) Status() Status
+
+// StatusChanges Returns what status changes the job has gone through along with a timestamp of when.
+func (j *Job) StatusChanges() []StatusChange
 
 // Output Get the full output (stdout and stderr) from the job.
 func (j *Job) Output() *job.OutputRequest
@@ -159,6 +184,35 @@ func (j *Job) Start() error
 
 // Stop End execution of the job immediately.
 func (j *Job) Stop()
+```
+```
+package library // import "github.com/kurczynski/teleport-job-worker/pkg/joblib/cgroups"
+
+TYPES
+
+// Cgroup Information used to construct cgroup.
+type Cgroup struct {
+	// Has unexported fields.
+}
+
+// Resources cgroup limits that can be configured for jobs.
+type Resources struct {
+	CPUPercentage int32
+	DiskIOBPS     int32
+	MemoryBytes   uint64
+}
+
+// NewCgroup Creates a new cgroup for the given job.
+func NewCgroup(cgroupRoot string, workerName string, jobID string) (*Cgroup, error)
+
+// FD Returns the cgroup file descriptor.
+func (c *Cgroup) FD() int
+
+// Configure Configure a cgroup with the given resource limits.
+func (c *Cgroup) Configure(resourceLimits Resources) error
+
+// Cleanup Remove cgroup files created for the job.
+func (c *Cgroup) Cleanup()
 ```
 
 ### Observability

@@ -33,6 +33,7 @@ const (
 	SucceededStatus = Status("succeeded")
 )
 
+// Status Status of the job.
 type Status string
 
 // Job Contains information to interact with jobs.
